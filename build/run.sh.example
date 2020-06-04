@@ -1,0 +1,11 @@
+rm -f CMakeCache.txt
+
+cmake -D CMAKE_INSTALL_PREFIX:PATH=${Trilinos_PATH} \
+-D CMAKE_BUILD_TYPE:STRING=Release \
+-D Trilinos_DIR:PATH=${Trilinos_PATH} \
+-D CMAKE_C_COMPILER:STRING=mpicc \
+-D CMAKE_CXX_COMPILER:STRING=mpicxx \
+-D BOOST_ROOT=${Boost_ROOT} \
+-D CMAKE_CXX_FLAGS:STRING="-O2 -Wall -std=c++11 -pedantic -Wno-long-long -ftrapv -Wno-deprecated" \
+-D CMAKE_EXE_LINKER_FLAGS:STRING="-lgfortran" \
+..
