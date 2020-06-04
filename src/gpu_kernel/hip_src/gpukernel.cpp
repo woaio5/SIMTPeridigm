@@ -15,6 +15,7 @@ int* newPtr;
 int* mybondDamage;
 #define groupsize 4
 double tot,dtot,ftot,dmpi,fmpi,dcpy,fcpy,dken,fken;
+hipStream_t stream0, stream1;
 
 double mysecond(){
         struct timeval tp;
@@ -83,30 +84,32 @@ void InitVUY(GParam* param, int numOwnedPoints){
 
 void InitDeviceMemory(GParam* param,int numOwnedPoints, int neighborsize, double*x , double *y,double* weightvolume, double* cellvolume, int* bonddamage, int* neighborhoodlist, int* neighborPtr,int globalnum){
 	int i;
-	hipMalloc((void**)&(param->x),globalnum*sizeof(double));
-	hipMalloc((void**)&(param->y),globalnum*sizeof(double));
-	hipMalloc((void**)&(param->v),globalnum*sizeof(double));
-	hipMalloc((void**)&(param->a),globalnum*sizeof(double));
-	hipMalloc((void**)&(param->u),globalnum*sizeof(double));
-	hipMalloc((void**)&(param->force),globalnum*sizeof(double));
-	hipMalloc((void**)&(param->weightvolume),globalnum/3*sizeof(double));
-	hipMalloc((void**)&(param->yout), globalnum*sizeof(double));
+	hipStreamCreate(&stream0);
+	hipStreamCreate(&stream1);
+	hipMalloc((void**)&(param->x),(numOwnedPoints+param->TotalImport)*3*sizeof(double));
+	hipMalloc((void**)&(param->y),(numOwnedPoints+param->TotalImport)*3*sizeof(double));
+	hipMalloc((void**)&(param->v),(numOwnedPoints+param->TotalImport)*3*sizeof(double));
+	hipMalloc((void**)&(param->a),(numOwnedPoints+param->TotalImport)*3*sizeof(double));
+	hipMalloc((void**)&(param->u),(numOwnedPoints+param->TotalImport)*3*sizeof(double));
+	hipMalloc((void**)&(param->force),(numOwnedPoints+param->TotalImport)*3*sizeof(double));
+	hipMalloc((void**)&(param->weightvolume),(numOwnedPoints+param->TotalImport)*sizeof(double));
+	hipMalloc((void**)&(param->yout), (numOwnedPoints+param->TotalImport)*3*sizeof(double));
 	//hipMalloc((void**)&(param->density),globalnum/3*sizeof(double));
-	hipMalloc((void**)&(param->cellvolume),globalnum/3*sizeof(double));
-	hipMalloc((void**)&(param->dilatation),globalnum/3*sizeof(double));
+	hipMalloc((void**)&(param->cellvolume),(numOwnedPoints+param->TotalImport)*sizeof(double));
+	hipMalloc((void**)&(param->dilatation),(numOwnedPoints+param->TotalImport)*sizeof(double));
 	hipMalloc((void**)&(param->neighborPtr),numOwnedPoints*sizeof(int));
 	hipMalloc((void**)&(param->mybondDamage),neighborsize*sizeof(int));
 	hipMalloc((void**)&(param->neiborlist),neighborsize*sizeof(int));
-	hipMemcpy(param->x, x, globalnum*sizeof(double),hipMemcpyHostToDevice);
-	hipMemcpy(param->y, y, globalnum*sizeof(double),hipMemcpyHostToDevice);
-	hipMemcpy(param->cellvolume, cellvolume, globalnum/3*sizeof(double),hipMemcpyHostToDevice);
-	hipMemcpy(param->weightvolume, weightvolume, globalnum/3*sizeof(double),hipMemcpyHostToDevice);
+	hipMemcpy(param->x, x, (numOwnedPoints+param->TotalImport)*3*sizeof(double),hipMemcpyHostToDevice);
+	hipMemcpy(param->y, y, (numOwnedPoints+param->TotalImport)*3*sizeof(double),hipMemcpyHostToDevice);
+	hipMemcpy(param->cellvolume, cellvolume, (numOwnedPoints+param->TotalImport)*sizeof(double),hipMemcpyHostToDevice);
+	hipMemcpy(param->weightvolume, weightvolume, (numOwnedPoints+param->TotalImport)*sizeof(double),hipMemcpyHostToDevice);
 	//hipMemcpy(param->density, density, globalnum/3*sizeof(double),hipMemcpyHostToDevice);
 	hipMemcpy(param->mybondDamage, bonddamage, (neighborsize)*sizeof(int),hipMemcpyHostToDevice);
 	hipMemcpy(param->neiborlist, neighborhoodlist, neighborsize*sizeof(int),hipMemcpyHostToDevice);
 	hipMemcpy(param->neighborPtr, neighborPtr, (numOwnedPoints/4+(numOwnedPoints%groupsize!=0))*sizeof(int),hipMemcpyHostToDevice);
-	newNptr = (int *)malloc(sizeof(int)*neighborsize);
-	newPtr = (int *)malloc(sizeof(int)*numOwnedPoints/4+(numOwnedPoints%groupsize!=0));
+	//newNptr = (int *)malloc(sizeof(int)*neighborsize);
+	//newPtr = (int *)malloc(sizeof(int)*numOwnedPoints/4+(numOwnedPoints%groupsize!=0));
 	mybondDamage = (int *)malloc(sizeof(int)*(neighborsize));
 	int deviceID = myrank % 4;
         hipGetDevice(&deviceID);
@@ -120,8 +123,8 @@ void InitDeviceMemory(GParam* param,int numOwnedPoints, int neighborsize, double
 	hipDeviceSynchronize();
 	hipLaunchKernelGGL(GPU_ReverseWeightVolume, dim3(nblocks),dim3(BLOCKSIZE),0,0,numOwnedPoints+param->TotalImport, param->weightvolume);
 	hipDeviceSynchronize();
-	hipMemcpy(newNptr, param->neiborlist,neighborsize*sizeof(int),hipMemcpyDeviceToHost);
-	hipMemcpy(newPtr, param->neighborPtr, (numOwnedPoints/4+(numOwnedPoints%groupsize!=0))*sizeof(int),hipMemcpyDeviceToHost);
+	//hipMemcpy(newNptr, param->neiborlist,neighborsize*sizeof(int),hipMemcpyDeviceToHost);
+	//hipMemcpy(newPtr, param->neighborPtr, (numOwnedPoints/4+(numOwnedPoints%groupsize!=0))*sizeof(int),hipMemcpyDeviceToHost);
 	int st = neighborPtr[0];
 	//for(int i=0; i< neighborhoodlist[st];i++)
 		printf("inner:%d outter:%d\n",(neighborhoodlist[0]&0x0000ffff),(neighborhoodlist[0]&0xffff0000)>>16);
@@ -521,9 +524,7 @@ void GPU_Dilatation_Interface(double *x, double *y, double *weightvolume, double
   	mpireq = (MPI_Request *)malloc(sizeof(MPI_Request)*mpi_size*4);
 	dmpi=0;dcpy=0;dken=0;
 
-	HipStream_t stream0, stream1;
-	hipStreamCreate(&stream0);
-	hipStreamCreate(&stream1);
+	st = mysecond();
 	//param->bulkModulus = bulkModulus;
 	//param->shearModulus = shearModulus;
 	//param->horizon = horizon;
@@ -539,8 +540,9 @@ void GPU_Dilatation_Interface(double *x, double *y, double *weightvolume, double
 	int MinGID = param->MinGID;
 
 	//double* temp = (double *)malloc(sizeof(double)*globalnum);
-	st = mysecond();
 	hipLaunchKernelGGL(DilatationKernel, dim3(nblocks),dim3(BLOCKSIZE),0,stream0,param->x, param->y, param->weightvolume, param->cellvolume, param->dilatation, param->mybondDamage, param->neiborlist, numOwnedPoints, horizon, param->neighborPtr,0);
+	hipMemcpyAsync(y, param->y, numOwnedPoints*3*sizeof(double), hipMemcpyDeviceToHost, stream1);
+	hipStreamSynchronize(stream1);
 	for(i=0;i<mpi_size;i++){
 		if(i!=myrank && NumProcRequest[nowblock][i]){
 			for(int j=0;j<NumProcRequest[nowblock][i];j++){
@@ -585,18 +587,20 @@ void GPU_Dilatation_Interface(double *x, double *y, double *weightvolume, double
 	//hipMemcpy(param->y,y,globalnum*sizeof(double),hipMemcpyHostToDevice);
 	//printf("DIlatation: Memcpy Y %e, %d\n",ed-st, numOwnedPoints);
 	//hipMemcpy(param->bonddamage, param->mybondDamage, (param->neighborsize-numOwnedPoints/groupsize)*sizeof(double),hipMemcpyHostToDevice);
-	hipDeviceSynchronize();
-	ed = mysecond();
-	dmpi += ed - st;
-	st = mysecond();
 	hipMemcpyAsync(&(param->y[numOwnedPoints*3]),&y[numOwnedPoints*3],(TotalImport)*3*sizeof(double),hipMemcpyHostToDevice,stream1);
-	ed = mysecond();
-	dcpy += ed - st;
-	st = mysecond();
+	hipStreamSynchronize(stream1);
+	//ed = mysecond();
+	//dmpi += ed - st;
+	//hipDeviceSynchronize();
+	//st = mysecond();
+	hipStreamSynchronize(stream0);
+	//hipMemcpy(&(param->y[numOwnedPoints*3]),&y[numOwnedPoints*3],(TotalImport)*3*sizeof(double),hipMemcpyHostToDevice);
+	//st = mysecond();
 	hipLaunchKernelGGL(DilatationKernel, dim3(nblocks),dim3(BLOCKSIZE),0,stream0,param->x, param->y, param->weightvolume, param->cellvolume, param->dilatation, param->mybondDamage, param->neiborlist, numOwnedPoints, horizon, param->neighborPtr,1);
-	hipDeviceSynchronize();
-	ed = mysecond();
-	dmpi += ed - st;
+	hipStreamSynchronize(stream0);
+	//ahipDeviceSynchronize();
+	//ed = mysecond();
+	//dmpi += ed - st;
 	//printf("DIlatation: Kernel %e\n",ed-st);
 	/*hipMemcpy( mybondDamage ,param->mybondDamage, (param->neighborsize)*sizeof(int),hipMemcpyDeviceToHost);
 	int *Nptr = &newNptr[newPtr[14823/4]];
@@ -620,13 +624,15 @@ void GPU_Dilatation_Interface(double *x, double *y, double *weightvolume, double
 			printf("(%d,%e), ",Nptr[i],(cdist-dist)/dist);
 	}
 	printf("\n");*/
-	st = mysecond();
+	//st = mysecond();
 	//hipMemcpy(&dilatation[numOwnedPoints], &((param->dilatation)[numOwnedPoints]), TotalImport*sizeof(double),hipMemcpyDeviceToHost);
-	hipMemcpy(dilatation, param->dilatation, numOwnedPoints*sizeof(double),hipMemcpyDeviceToHost);
+	//hipMemcpy(dilatation, param->dilatation, numOwnedPoints*sizeof(double),hipMemcpyDeviceToHost);
+	//ed = mysecond();
+	//dcpy += ed -st;
+	//hipStreamDestroy(stream0);
+	//hipStreamDestroy(stream1);
 	ed = mysecond();
-	dcpy += ed -st;
-	hipStreamDestory(stream0);
-	hipStreamDestory(stream1);
+	dcpy += ed - st;
 	/*char result[1000];
 	sprintf(result,"+++++++++++++++++++++++++\nDilatation Kernel BreakDown of %d\nMPI:%e\nMemcpy:%e\nKernel:%e\n+++++++++++++++++++++++++\n",myrank,mpi,cpy,ken);
 	printf("%s",result);*/
@@ -663,13 +669,18 @@ void GPU_Force_Interface(double *x, double *y, double* weightvolume, double* cel
 	int MaxGID = param->MaxGID;
 	int MinGID = param->MinGID;
 	st = mysecond();
+	//hipStream_t stream0, stream1;
+	//hipStreamCreate(&stream0);
+	//hipStreamCreate(&stream1);
 	int TotalImport = 0;
 	for(i=0;i<mpi_size;i++){
 		TotalImport += NumImport[nowblock][i];	
 	}
 	//printf("Before myrank %d: %d in dilatation[%d] = %e\n", myrank ,35250, LIDList[nowblock][35250-MinGID], dilatation[35250]);
-	st = mysecond();
-	hipLaunchKernelGGL(ForceKernel, dim3(nblocks),dim3(BLOCKSIZE),0,0,param->x, param->y, param->weightvolume, param->cellvolume, param->dilatation, param->mybondDamage, param->force, param->neiborlist, numOwnedPoints, bulkModulus,shearModulus,horizon,param->neighborPtr, param->a, param->v, param->u, param->density,param->dt,param->yout,0);
+	//st = mysecond();
+	hipLaunchKernelGGL(ForceKernel, dim3(nblocks),dim3(BLOCKSIZE),0,stream0,param->x, param->y, param->weightvolume, param->cellvolume, param->dilatation, param->mybondDamage, param->force, param->neiborlist, numOwnedPoints, bulkModulus,shearModulus,horizon,param->neighborPtr, param->a, param->v, param->u, param->density,param->dt,param->yout,0);
+	hipMemcpyAsync(dilatation, param->dilatation, numOwnedPoints*sizeof(double), hipMemcpyDeviceToHost, stream1);
+	hipStreamSynchronize(stream1);
 	for(i=0;i<mpi_size;i++){
 		if(i!=myrank && NumProcRequest[nowblock][i]){
 			for(int j=0;j<NumProcRequest[nowblock][i];j++){
@@ -721,18 +732,21 @@ void GPU_Force_Interface(double *x, double *y, double* weightvolume, double* cel
 	//printf("Thanks for using the GPU version!!!! %p,%d\n",param->force,globalnum);
 	//printf("After myrank %d: %d in dilatation[%d] = %e\n", myrank ,35250, LIDList[nowblock][35250-MinGID], weightvolume[35250]);
 	//param->numOwnedpoints = numOwnedPoints;
-	hipDeviceSynchronize();
-	ed = mysecond();
-	fmpi += ed - st;
-	st = mysecond();
-	hipMemcpy(&(param->dilatation[numOwnedPoints]),&dilatation[numOwnedPoints],TotalImport*sizeof(double),hipMemcpyHostToDevice);
-	ed = mysecond();
-	fcpy += ed - st;
-	st = mysecond();
-	hipLaunchKernelGGL(ForceKernel, dim3(nblocks),dim3(BLOCKSIZE),0,0,param->x, param->y, param->weightvolume, param->cellvolume, param->dilatation, param->mybondDamage, param->force, param->neiborlist, numOwnedPoints, bulkModulus,shearModulus,horizon,param->neighborPtr, param->a, param->v, param->u, param->density,param->dt,param->yout,1);
-	hipDeviceSynchronize();
-	ed = mysecond();
-	fmpi += ed - st;
+	//st = mysecond();
+	hipMemcpyAsync(&(param->dilatation[numOwnedPoints]),&dilatation[numOwnedPoints],TotalImport*sizeof(double),hipMemcpyHostToDevice,stream1);
+	hipStreamSynchronize(stream1);
+	//ed = mysecond();
+	//fmpi += ed - st;
+	//st = mysecond();
+	hipStreamSynchronize(stream0);
+	//hipDeviceSynchronize();
+	//hipMemcpy(&(param->dilatation[numOwnedPoints]),&dilatation[numOwnedPoints],TotalImport*sizeof(double),hipMemcpyHostToDevice);
+	//st = mysecond();
+	hipLaunchKernelGGL(ForceKernel, dim3(nblocks),dim3(BLOCKSIZE),0,stream0,param->x, param->y, param->weightvolume, param->cellvolume, param->dilatation, param->mybondDamage, param->force, param->neiborlist, numOwnedPoints, bulkModulus,shearModulus,horizon,param->neighborPtr, param->a, param->v, param->u, param->density,param->dt,param->yout,1);
+	hipStreamSynchronize(stream0);
+	//hipDeviceSynchronize();
+	//ed = mysecond();
+	//fmpi += ed - st;
 	double* temp;
 	temp = param->y;
 	param->y = param->yout;
@@ -740,11 +754,15 @@ void GPU_Force_Interface(double *x, double *y, double* weightvolume, double* cel
 	//ForceTest(x, y, weightvolume, cellvolume, dilatation, bondDamage, force, newNptr, numOwnedPoints, bulkModulus,shearModulus,horizon,newPtr);
 	//printf("Force: Kernel %e\n",ed-st);
 	//hipMemcpy(y, param->y, (numOwnedPoints)*3*sizeof(double),hipMemcpyDeviceToHost);
-	st = mysecond();
-	hipMemcpy(y, param->y, (numOwnedPoints)*3*sizeof(double),hipMemcpyDeviceToHost);
+	/*st = mysecond();
+	hipMemcpy(force, param->force, (numOwnedPoints)*3*sizeof(double),hipMemcpyDeviceToHost);
+	ed = mysecond();
+	fcpy += ed - st;*/
+	//hipStreamDestroy(stream0);
+	//hipStreamDestroy(stream1);
 	ed = mysecond();
 	fcpy += ed - st;
-	double *dm, *dc, *fm, *fc;
+	/*double *dm, *dc, *fm, *fc;
 	dm = (double *)malloc(sizeof(double)*mpi_size);
 	dc = (double *)malloc(sizeof(double)*mpi_size);
 	fc = (double *)malloc(sizeof(double)*mpi_size);
@@ -803,7 +821,7 @@ void GPU_Force_Interface(double *x, double *y, double* weightvolume, double* cel
 		printf("MPI\t%e\t%e\t%e\n",rfm[1],rfm[0],rfm[2]);
 		printf("CPY\t%e\t%e\t%e\n",rfc[1],rfc[0],rfc[2]);
 		printf("+++++++++++++++++++++++++++++++++\n");
-	}
+	}*/
 	
 	//hipMemcpy(dilatation, param->dilatation, (numOwnedPoints+TotalImport)*sizeof(double),hipMemcpyDeviceToHost);
 	//printf("After1 myrank %d: %d in dilatation[%d] = %e\n", myrank ,35250, LIDList[nowblock][35250-MinGID], force[0]);
